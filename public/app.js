@@ -35,6 +35,7 @@ $$('.source-btn').forEach(btn => {
     btn.classList.add('active');
     currentSource = btn.dataset.source;
     $('#driveSource').style.display = currentSource === 'drive' ? 'flex' : 'none';
+    $('#torrentSource').style.display = currentSource === 'torrent' ? 'flex' : 'none';
     $('#fileSource').style.display = currentSource === 'file' ? 'flex' : 'none';
     if (currentSource === 'file') refreshFileSelect();
   });
@@ -61,7 +62,14 @@ socket.on('download:progress', (data) => {
   const percent = data.percent || 0;
   $('#dlPercent').textContent = `${percent.toFixed(1)}%`;
   $('#dlProgressBar').style.width = `${percent}%`;
-  if (data.speed) $('#dlSpeed').textContent = formatSpeed(data.speed);
+
+  let speedText = '';
+  if (data.speed) speedText = formatSpeed(data.speed);
+  if (data.source === 'torrent' && data.peers !== undefined) {
+    speedText += ` · ${data.peers} peers`;
+  }
+  $('#dlSpeed').textContent = speedText || '…';
+
   const dlMB = (data.downloaded / 1048576).toFixed(1);
   const totMB = data.total ? (data.total / 1048576).toFixed(1) : '?';
   $('#dlSize').textContent = `${dlMB} MB / ${totMB} MB`;
@@ -220,6 +228,48 @@ $('#downloadOnlyBtn').addEventListener('click', async () => {
   } catch (err) { showToast(err.message, 'error'); }
 });
 
+// Torrent preview
+$('#torrentPreviewBtn').addEventListener('click', async () => {
+  const magnet = $('#magnetUrl').value.trim();
+  if (!magnet) return showToast('Enter a magnet link first', 'warning');
+  const btn = $('#torrentPreviewBtn');
+  btn.disabled = true;
+  btn.textContent = 'Fetching metadata…';
+  try {
+    const res = await fetch('/api/torrent/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet }) });
+    const data = await res.json();
+    if (data.success) {
+      $('#torrentName').textContent = data.name;
+      $('#torrentSize').textContent = data.totalSizeFormatted;
+      $('#torrentFileCount').textContent = `${data.fileCount} file(s)`;
+      $('#torrentSelected').textContent = data.selectedFile
+        ? `${data.selectedFile.name} (${data.selectedFile.sizeFormatted})`
+        : 'No video file found';
+      $('#torrentPreviewResult').style.display = 'block';
+      showToast('Torrent info retrieved', 'success');
+    } else showToast(data.error, 'error');
+  } catch (err) { showToast(err.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = '🔍 Preview Torrent'; }
+});
+
+// Torrent download-only
+$('#torrentDownloadBtn').addEventListener('click', async () => {
+  const magnet = $('#magnetUrl').value.trim();
+  if (!magnet) return showToast('Enter a magnet link first', 'warning');
+  try {
+    const res = await fetch('/api/torrent/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet }) });
+    const data = await res.json();
+    if (data.success) {
+      currentDownloadId = data.downloadId;
+      $('#downloadProgress').style.display = 'block';
+      $('#dlPercent').textContent = '0%';
+      $('#dlProgressBar').style.width = '0%';
+      $('#dlSpeed').textContent = 'Finding peers…';
+      showToast('Torrent download started', 'info');
+    } else showToast(data.error, 'error');
+  } catch (err) { showToast(err.message, 'error'); }
+});
+
 // Refresh file select dropdown
 $('#refreshFilesBtn').addEventListener('click', refreshFileSelect);
 
@@ -263,6 +313,26 @@ $('#streamForm').addEventListener('submit', async (e) => {
         $('#dlSpeed').textContent = 'Connecting…';
         $('#dlSize').textContent = '0 MB / 0 MB';
         showToast('Download started — stream will begin when ready', 'info');
+      } else { showToast(data.error, 'error'); resetStartBtn(); }
+
+    } else if (currentSource === 'torrent') {
+      const magnet = $('#magnetUrl').value.trim();
+      if (!magnet) { showToast('Magnet link is required', 'warning'); resetStartBtn(); return; }
+
+      res = await fetch('/api/stream/torrent', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ magnet, streamKey, rtmpUrl, resolution, bitrate, fps, loop, shortsMode, shortsFit }),
+      });
+      data = await res.json();
+
+      if (data.success) {
+        currentDownloadId = data.downloadId;
+        $('#downloadProgress').style.display = 'block';
+        $('#dlPercent').textContent = '0%';
+        $('#dlProgressBar').style.width = '0%';
+        $('#dlSpeed').textContent = 'Finding peers…';
+        $('#dlSize').textContent = '0 MB / 0 MB';
+        showToast('Torrent download started — stream will begin when ready', 'info');
       } else { showToast(data.error, 'error'); resetStartBtn(); }
 
     } else {

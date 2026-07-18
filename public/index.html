@@ -60,7 +60,11 @@
         <div class="source-toggle">
           <button type="button" class="source-btn active" data-source="drive">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a6 6 0 1 1-6 6 6 6 0 0 1 6-6z"/></svg>
-            Google Drive URL
+            Google Drive
+          </button>
+          <button type="button" class="source-btn" data-source="torrent">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            Torrent
           </button>
           <button type="button" class="source-btn" data-source="file">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -84,6 +88,26 @@
             <div class="preview-row"><span class="preview-label">File</span><span class="preview-value" id="previewName">—</span></div>
             <div class="preview-row"><span class="preview-label">Size</span><span class="preview-value" id="previewSize">—</span></div>
             <div class="preview-row"><span class="preview-label">Type</span><span class="preview-value" id="previewType">—</span></div>
+          </div>
+        </div>
+
+        <!-- Torrent Magnet input -->
+        <div class="field-group" id="torrentSource" style="display:none;">
+          <label for="magnetUrl">
+            <span class="field-icon">🧲</span>
+            Torrent Magnet Link
+          </label>
+          <input type="text" id="magnetUrl" placeholder="magnet:?xt=urn:btih:HASH&dn=..." autocomplete="off">
+          <div class="field-hint">Paste any public magnet link. Largest video file will be auto-selected.</div>
+          <div class="btn-row">
+            <button type="button" class="btn btn-ghost btn-sm" id="torrentPreviewBtn">🔍 Preview Torrent</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="torrentDownloadBtn">⬇ Download Only</button>
+          </div>
+          <div class="preview-result" id="torrentPreviewResult" style="display:none;">
+            <div class="preview-row"><span class="preview-label">Name</span><span class="preview-value" id="torrentName">—</span></div>
+            <div class="preview-row"><span class="preview-label">Total Size</span><span class="preview-value" id="torrentSize">—</span></div>
+            <div class="preview-row"><span class="preview-label">Files</span><span class="preview-value" id="torrentFileCount">—</span></div>
+            <div class="preview-row"><span class="preview-label">Selected</span><span class="preview-value" id="torrentSelected">—</span></div>
           </div>
         </div>
 

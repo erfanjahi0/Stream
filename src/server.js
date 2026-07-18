@@ -14,6 +14,7 @@ dotenv.config();
 
 const StreamManager = require('./streamManager');
 const { extractFileId, getFileInfo, downloadFile, formatBytes } = require('./driveDownloader');
+const { normalizeMagnet, getTorrentInfo, downloadTorrent } = require('./torrentDownloader');
 
 const app = express();
 const server = http.createServer(app);
@@ -223,6 +224,134 @@ app.post('/api/stream/start', async (req, res) => {
     } catch (err) {
       console.error(`[${downloadId}] Error:`, err.message);
       io.emit('download:error', { downloadId, fileId, error: err.message });
+    }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  TORRENT API
+// ═══════════════════════════════════════════════════════════════
+
+// Preview torrent info from a magnet link (without downloading)
+app.post('/api/torrent/preview', async (req, res) => {
+  try {
+    const { magnet } = req.body;
+    if (!magnet) return res.status(400).json({ error: 'No magnet link provided' });
+
+    const info = await getTorrentInfo(magnet);
+    res.json({
+      success: true,
+      name: info.name,
+      infoHash: info.infoHash,
+      totalSize: info.totalSize,
+      totalSizeFormatted: formatBytes(info.totalSize),
+      fileCount: info.files.length,
+      selectedFile: info.selectedFile ? {
+        name: info.selectedFile.name,
+        size: info.selectedFile.size,
+        sizeFormatted: formatBytes(info.selectedFile.size),
+      } : null,
+      files: info.files.map(f => ({
+        name: f.name,
+        size: f.size,
+        sizeFormatted: formatBytes(f.size),
+      })),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Download-only from torrent
+app.post('/api/torrent/download', async (req, res) => {
+  try {
+    const { magnet } = req.body;
+    if (!magnet) return res.status(400).json({ error: 'No magnet link provided' });
+
+    const downloadId = `dl_${Date.now()}`;
+
+    res.json({
+      success: true,
+      message: 'Torrent download started',
+      downloadId,
+    });
+
+    console.log(`[${downloadId}] Starting torrent download...`);
+
+    try {
+      const result = await downloadTorrent(magnet, DOWNLOAD_DIR, (progress) => {
+        io.emit('download:progress', { downloadId, source: 'torrent', ...progress });
+      });
+
+      console.log(`[${downloadId}] Torrent download complete: ${result.path}`);
+      io.emit('download:complete', { downloadId, source: 'torrent', ...result });
+      io.emit('files:changed');
+    } catch (err) {
+      console.error(`[${downloadId}] Torrent error:`, err.message);
+      io.emit('download:error', { downloadId, source: 'torrent', error: err.message });
+    }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Start a stream from a torrent magnet (download → stream)
+app.post('/api/stream/torrent', async (req, res) => {
+  try {
+    const {
+      magnet,
+      rtmpUrl,
+      streamKey,
+      loop = false,
+      resolution = '1080p',
+      bitrate = '6000k',
+      fps = 30,
+      shortsMode = false,
+      shortsFit = 'crop',
+    } = req.body;
+
+    if (!magnet) return res.status(400).json({ error: 'Magnet link is required' });
+    if (!streamKey) return res.status(400).json({ error: 'YouTube stream key is required' });
+
+    const finalRtmpUrl = rtmpUrl || process.env.YOUTUBE_RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2';
+    const downloadId = `dl_${Date.now()}`;
+
+    res.json({
+      success: true,
+      message: 'Torrent download started. Stream will begin when download completes.',
+      downloadId,
+    });
+
+    console.log(`[${downloadId}] Starting torrent download for streaming...`);
+
+    try {
+      const result = await downloadTorrent(magnet, DOWNLOAD_DIR, (progress) => {
+        io.emit('download:progress', { downloadId, source: 'torrent', ...progress });
+      });
+
+      console.log(`[${downloadId}] Torrent download complete: ${result.path} (${formatBytes(result.size)})`);
+      io.emit('download:complete', { downloadId, source: 'torrent', ...result });
+
+      const streamId = streamManager.startStream({
+        filePath: result.path,
+        fileName: result.name,
+        rtmpUrl: finalRtmpUrl,
+        streamKey, loop, resolution, bitrate, fps, shortsMode, shortsFit,
+      });
+
+      io.emit('stream:started', {
+        downloadId, streamId,
+        fileName: result.name,
+        fileSize: result.size,
+        shortsMode,
+      });
+
+      console.log(`[${downloadId}] Stream started: ${streamId}`);
+    } catch (err) {
+      console.error(`[${downloadId}] Error:`, err.message);
+      io.emit('download:error', { downloadId, source: 'torrent', error: err.message });
     }
   } catch (err) {
     res.status(400).json({ error: err.message });
