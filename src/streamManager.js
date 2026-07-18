@@ -57,15 +57,17 @@ class StreamManager {
     );
 
     // ─── Build FFmpeg arguments ───
-    // Key fixes:
-    // - Use -fflags +genkey to generate keyframes on output
-    // - Use -flags +global_header for RTMP compatibility
-    // - Add -analyzeduration and -probesize for large files
-    // - Use safe filter syntax
+    // Optimized for real-time streaming that stays AHEAD of realtime
+    // (speed > 1.0x) so YouTube's ingest never starves and drops us.
     const ffmpegArgs = [];
 
     // Input analysis (helps with large/odd files)
     ffmpegArgs.push('-analyzeduration', '100M', '-probesize', '100M');
+
+    // RTMP reconnection robustness
+    ffmpegArgs.push('-reconnect', '1');
+    ffmpegArgs.push('-reconnect_streamed', '1');
+    ffmpegArgs.push('-reconnect_delay_max', '5');
 
     // Input
     if (loop) {
@@ -73,25 +75,31 @@ class StreamManager {
     }
     ffmpegArgs.push('-re', '-i', filePath);
 
-    // Video encoding
+    // Video encoding — ultrafast + zerolatency keeps speed > 1.0x
+    // so we never fall behind realtime and get dropped by YouTube
     ffmpegArgs.push('-c:v', 'libx264');
-    ffmpegArgs.push('-preset', 'veryfast');
+    ffmpegArgs.push('-preset', 'ultrafast');
+    ffmpegArgs.push('-tune', 'zerolatency');
     ffmpegArgs.push('-b:v', finalBitrate);
     ffmpegArgs.push('-maxrate', finalBitrate);
     ffmpegArgs.push('-bufsize', `${parseInt(finalBitrate) * 2}k`);
     ffmpegArgs.push('-pix_fmt', 'yuv420p');
     ffmpegArgs.push('-r', String(fps));
 
-    if (scaleFilter) {
-      ffmpegArgs.push('-vf', scaleFilter);
-    }
+    // Cap threads to avoid OOM on Railway (libx264 auto-detects too many cores)
+    ffmpegArgs.push('-threads', '4');
 
-    // Keyframe interval (2 seconds)
+    // Video filter — always append setsar=1 to normalize aspect ratio
+    // (fixes "SAR 81:256 DAR 9:16" distortion that YouTube rejects)
+    const vf = scaleFilter ? `${scaleFilter},setsar=1` : 'setsar=1';
+    ffmpegArgs.push('-vf', vf);
+
+    // Keyframe interval (2 seconds — YouTube requirement)
     ffmpegArgs.push('-g', String(fps * 2));
     ffmpegArgs.push('-keyint_min', String(fps * 2));
-    ffmpegArgs.push('-force_key_frames', `expr:gte(t,n_forced*${fps * 2})`);
+    ffmpegArgs.push('-force_key_frames', `expr:gte(t,n_forced*2)`);
 
-    // Audio — check if source has audio, if not generate silent
+    // Audio
     ffmpegArgs.push('-c:a', 'aac');
     ffmpegArgs.push('-b:a', '128k');
     ffmpegArgs.push('-ar', '44100');
@@ -134,11 +142,18 @@ class StreamManager {
     // Parse FFmpeg stderr
     let logBuffer = '';
     let hasReceivedData = false;
+    let recentLines = []; // keep last lines to diagnose why it exited
 
     ffmpeg.stderr.on('data', (data) => {
       const text = data.toString();
       logBuffer += text;
       hasReceivedData = true;
+
+      // Track recent non-empty lines for exit diagnosis
+      text.split('\n').forEach(l => {
+        const t = l.trim();
+        if (t) { recentLines.push(t); if (recentLines.length > 15) recentLines.shift(); }
+      });
 
       // Emit raw log to subscribed clients
       this.io.to(`stream:${id}`).emit('stream:log', {
@@ -221,16 +236,27 @@ class StreamManager {
       stream.endedAt = new Date();
       stream.uptimeSeconds = (stream.endedAt - stream.startedAt) / 1000;
 
-      // If FFmpeg exited immediately with an error and we never went live
-      if (!hasReceivedData && code !== 0) {
+      // Surface the real reason FFmpeg exited (last stderr lines)
+      const tail = recentLines.join('\n');
+      const knownCauses = this.diagnoseExit(recentLines, stream);
+
+      // If FFmpeg exited with an error
+      if (code !== 0 && code !== 255) {
         stream.status = 'error';
-        const errorMsg = `FFmpeg exited immediately (code ${code}). Check if the video file is valid and the stream key is correct.`;
+        const errorMsg = knownCauses ||
+          (hasReceivedData
+            ? `FFmpeg exited (code ${code}) after streaming. Likely YouTube dropped the connection.`
+            : `FFmpeg exited immediately (code ${code}). Check the video file and stream key.`);
         stream.logs.push({ level: 'error', text: errorMsg, time: new Date() });
+        stream.logs.push({ level: 'error', text: `Last output:\n${tail}`, time: new Date() });
         this.io.to(`stream:${id}`).emit('stream:error', { id, error: errorMsg });
+        console.error(`[Stream ${id}] Exit diagnosis: ${errorMsg}`);
+        console.error(`[Stream ${id}] Last output:\n${tail}`);
       }
 
       this.io.to(`stream:${id}`).emit('stream:ended', {
         id, status: stream.status, code, uptime: stream.uptimeSeconds,
+        diagnosis: knownCauses || null,
       });
 
       // Clean up downloaded file after stream ends
@@ -248,6 +274,35 @@ class StreamManager {
     });
 
     return id;
+  }
+
+  /**
+   * Diagnose why FFmpeg exited by scanning the last stderr lines
+   * for known error signatures. Returns a plain-English message or null.
+   */
+  diagnoseExit(recentLines, stream) {
+    const text = recentLines.join('\n').toLowerCase();
+
+    if (text.includes('broken pipe') || text.includes('connection reset') ||
+        text.includes('error writing trailer') || text.includes('end of file')) {
+      return 'YouTube closed the connection. This usually means: (1) the Live stream in YouTube Studio was not started/active, (2) the stream key is wrong or already in use, or (3) the encoder fell behind realtime. Make sure YouTube Studio shows "waiting for stream" before you start here.';
+    }
+    if (text.includes('403') || text.includes('forbidden')) {
+      return 'YouTube rejected the stream (403). The stream key is likely invalid or expired. Copy a fresh key from YouTube Studio.';
+    }
+    if (text.includes('rtmp') && (text.includes('failed') || text.includes('refused') || text.includes('unable to open'))) {
+      return 'Could not connect to the RTMP server. Check the RTMP URL and stream key.';
+    }
+    if (text.includes('out of memory') || text.includes('cannot allocate') || text.includes('killed')) {
+      return 'FFmpeg ran out of memory (Railway container limit). Try a lower resolution/bitrate, or upgrade the Railway plan for more RAM.';
+    }
+    if (text.includes('no such file') || text.includes('invalid data found')) {
+      return 'The video file is missing or corrupted. Try re-downloading it.';
+    }
+    if (stream.stats.speed > 0 && stream.stats.speed < 0.95) {
+      return `Encoder fell behind realtime (speed ${stream.stats.speed}x < 1.0x), so YouTube starved and dropped the stream. Lower the resolution or bitrate — the container CPU can't encode fast enough at these settings.`;
+    }
+    return null;
   }
 
   /**

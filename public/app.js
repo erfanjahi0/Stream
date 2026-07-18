@@ -121,7 +121,11 @@ socket.on('stream:ended', (data) => {
     card.querySelector('.stream-stop-btn').textContent = '✓ Done';
     card.querySelector('.stream-stop-btn').disabled = true;
   }
-  showToast(`Stream ${data.status}`, 'info');
+  if (data.diagnosis) {
+    showToast(data.diagnosis, 'error', 12000);
+  } else {
+    showToast(`Stream ${data.status}`, 'info');
+  }
   fetchStreams();
   fetchFiles();
 });
@@ -498,13 +502,13 @@ function formatSpeed(bps) {
 
 function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : '—'; }
 
-function showToast(msg, type = 'info') {
+function showToast(msg, type = 'info', duration = 5000) {
   const icons = { success: '✓', error: '✕', info: 'ℹ', warning: '⚠' };
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   toast.innerHTML = `<span class="toast-icon">${icons[type]||'ℹ'}</span><span>${msg}</span>`;
   $('#toastContainer').appendChild(toast);
-  setTimeout(() => { toast.style.animation = 'toastIn 0.3s ease reverse'; setTimeout(() => toast.remove(), 300); }, 5000);
+  setTimeout(() => { toast.style.animation = 'toastIn 0.3s ease reverse'; setTimeout(() => toast.remove(), 300); }, duration);
 }
 
 // ═══════════════════════════════════════════════════════════════
