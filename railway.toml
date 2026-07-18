@@ -1,7 +1,8 @@
+# ──────────────────────────────────────────────
+# StreamForge — Railway Config
+# ──────────────────────────────────────────────
+
 [deploy]
 startCommand = "node src/server.js"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 30
-
-# No persistent volume needed — Railway containers have large ephemeral storage
-# Downloaded files are cleaned up automatically after each stream ends

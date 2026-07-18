@@ -31,6 +31,14 @@ fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+// FFmpeg status endpoint
+app.get('/api/ffmpeg-status', (req, res) => {
+  res.json({
+    found: !!process.env.FFMPEG_PATH || ffmpegAvailable,
+    path: process.env.FFMPEG_PATH || (ffmpegAvailable ? 'ffmpeg (system PATH)' : null),
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════
 //  FILE MANAGEMENT API
 // ═══════════════════════════════════════════════════════════════
@@ -248,18 +256,23 @@ app.post('/api/stream/file', (req, res) => {
 
     const stat = fs.statSync(filePath);
 
-    const streamId = streamManager.startStream({
-      filePath,
-      fileName: path.basename(fileName),
-      rtmpUrl: finalRtmpUrl,
-      streamKey,
-      loop,
-      resolution,
-      bitrate,
-      fps,
-      shortsMode,
-      shortsFit,
-    });
+    let streamId;
+    try {
+      streamId = streamManager.startStream({
+        filePath,
+        fileName: path.basename(fileName),
+        rtmpUrl: finalRtmpUrl,
+        streamKey,
+        loop,
+        resolution,
+        bitrate,
+        fps,
+        shortsMode,
+        shortsFit,
+      });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
 
     res.json({
       success: true,
@@ -348,6 +361,49 @@ io.on('connection', (socket) => {
   });
 });
 
+// ─── Verify ffmpeg is installed before starting ───
+const { execSync } = require('child_process');
+
+let ffmpegAvailable = false;
+
+function findFfmpeg() {
+  // Check common paths
+  const commonPaths = [
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    '/opt/homebrew/bin/ffmpeg',
+  ];
+
+  for (const p of commonPaths) {
+    try {
+      execSync(`${p} -version`, { stdio: 'ignore' });
+      console.log(`[StreamForge] FFmpeg found at: ${p}`);
+      process.env.FFMPEG_PATH = p;
+      ffmpegAvailable = true;
+      return p;
+    } catch (e) {}
+  }
+
+  // Try which
+  try {
+    const which = execSync('which ffmpeg 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (which) {
+      console.log(`[StreamForge] FFmpeg found via which: ${which}`);
+      process.env.FFMPEG_PATH = which;
+      ffmpegAvailable = true;
+      return which;
+    }
+  } catch (e) {}
+
+  console.error('[StreamForge] WARNING: FFmpeg not found! Streams will fail.');
+  console.error('[StreamForge] Make sure ffmpeg is installed in the container.');
+  console.error('[StreamForge] The nixpacks.toml should install it via aptPkgs: ["ffmpeg"]');
+  ffmpegAvailable = false;
+  return null;
+}
+
+const ffmpegPath = findFfmpeg();
+
 // ─── Start ───
 server.listen(PORT, () => {
   console.log(`╔══════════════════════════════════════════╗`);
@@ -355,7 +411,16 @@ server.listen(PORT, () => {
   console.log(`║  Listening on http://localhost:${PORT}       ║`);
   console.log(`║  Max streams: ${streamManager.maxConcurrent}                        ║`);
   console.log(`║  Download dir: ${DOWNLOAD_DIR}  ║`);
+  console.log(`║  FFmpeg: ${ffmpegPath || 'NOT FOUND'} ${' '.repeat(Math.max(0, 26 - (ffmpegPath || 'NOT FOUND').length))}║`);
   console.log(`╚══════════════════════════════════════════╝`);
+
+  if (!ffmpegPath) {
+    console.error('');
+    console.error('╔══════════════════════════════════════════════════╗');
+    console.error('║  ⚠  FFMPEG NOT FOUND — STREAMS WILL FAIL        ║');
+    console.error('║  Check nixpacks.toml has aptPkgs = ["ffmpeg"]   ║');
+    console.error('╚══════════════════════════════════════════════════╝');
+  }
 });
 
 module.exports = { app, server, io };

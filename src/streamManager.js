@@ -40,6 +40,14 @@ class StreamManager {
       throw new Error(`Max concurrent streams (${this.maxConcurrent}) reached`);
     }
 
+    // Verify ffmpeg is available
+    const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
+    try {
+      require('child_process').execSync(`${ffmpegPath} -version`, { stdio: 'ignore' });
+    } catch (e) {
+      throw new Error('FFmpeg is not installed on the server. Check deployment configuration.');
+    }
+
     const id = uuidv4();
     const outputUrl = `${rtmpUrl}/${streamKey}`;
 
@@ -99,7 +107,6 @@ class StreamManager {
     console.log(`[Stream ${id}] FFmpeg command: ffmpeg ${ffmpegArgs.join(' ')}`);
 
     // Spawn FFmpeg
-    const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
     const ffmpeg = spawn(ffmpegPath, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
 
     const stream = {
