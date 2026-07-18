@@ -1,0 +1,16 @@
+# ──────────────────────────────────────────────
+# StreamForge — Nixpacks Configuration for Railway
+# Ensures ffmpeg is installed in the container
+# ──────────────────────────────────────────────
+
+[phases.setup]
+nixPkgs = ["ffmpeg_6", "nodejs_20"]
+
+[phases.install]
+cmds = ["npm install --production"]
+
+[phases.build]
+cmds = ["echo 'Build complete'"]
+
+[start]
+cmd = "node src/server.js"
