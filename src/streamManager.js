@@ -64,11 +64,6 @@ class StreamManager {
     // Input analysis (helps with large/odd files)
     ffmpegArgs.push('-analyzeduration', '100M', '-probesize', '100M');
 
-    // RTMP reconnection robustness
-    ffmpegArgs.push('-reconnect', '1');
-    ffmpegArgs.push('-reconnect_streamed', '1');
-    ffmpegArgs.push('-reconnect_delay_max', '5');
-
     // Input
     if (loop) {
       ffmpegArgs.push('-stream_loop', '-1');

@@ -407,7 +407,7 @@ const ffmpegPath = findFfmpeg();
 // ─── Start ───
 server.listen(PORT, () => {
   console.log(`╔══════════════════════════════════════════╗`);
-  console.log(`║  StreamForge v3.0.0                      ║`);
+  console.log(`║  StreamForge v6.1.0                      ║`);
   console.log(`║  Listening on http://localhost:${PORT}       ║`);
   console.log(`║  Max streams: ${streamManager.maxConcurrent}                        ║`);
   console.log(`║  Download dir: ${DOWNLOAD_DIR}  ║`);
